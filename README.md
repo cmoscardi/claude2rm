@@ -8,7 +8,8 @@ calls `ExitPlanMode`; a `PreToolUse` hook intercepts it, renders the plan, and
 uploads it; only then does the approval prompt appear in your terminal.
 
 Install once, globally. After that it is automatic in every project on the
-machine — nothing to configure per repo, nothing to invoke by hand.
+machine — nothing to configure per repo, nothing to invoke by hand. Any other
+markdown file can be sent on demand with `/send2rm <file.md>`.
 
 ## How it works
 
@@ -109,16 +110,41 @@ Verify with `/plan2rm doctor`.
 
 ## Usage
 
-There is no usage. That is the point — plans push themselves.
+Plans need no usage. That is the point — they push themselves.
 
-The `/plan2rm` command exists for everything around that:
+### Sending any markdown file
+
+Anything else you want on the tablet goes through the same renderer:
+
+```
+/send2rm docs/next-steps.md
+```
+
+Or just ask for it in plain English — "send next-steps.md to my reMarkable",
+"put these notes on my tablet". Claude resolves the file and pushes it.
+
+The document is filed under the folder for the repository *the file lives in*,
+not the directory your shell is in, so pushing `~/work/api/NOTES.md` from
+anywhere files it under `api`. Its title is the file's own H1, or the filename
+when it has none — `next-steps.md` becomes "Next steps".
+
+| Flag | Effect |
+| --- | --- |
+| `--title "..."` | Override the title (one file at a time) |
+| `--project <name>` | File it under a different folder |
+
+Several files at once are fine: `/send2rm a.md b.md c.md`.
+
+Markdown only. The renderer does not take PDF, plain text, or source files.
+
+### Everything else
 
 | Command | Effect |
 | --- | --- |
 | `/plan2rm doctor` | Check the toolchain, pairing, and config |
 | `/plan2rm status` | List what is on the tablet, flag duplicates |
 | `/plan2rm config` | Show the config file and its path |
-| `/plan2rm push <file.md>` | Render and upload a markdown file by hand |
+| `/plan2rm push <file.md>...` | The same as `/send2rm` |
 | `/plan2rm clean --yes` | Delete every pushed plan from the cloud |
 | `/plan2rm clean <project> --yes` | Delete one project's folder |
 

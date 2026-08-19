@@ -225,6 +225,20 @@ def plan_title(plan_md, fallback="Untitled plan"):
     return title or fallback
 
 
+def title_from_filename(path):
+    """A readable title for a document whose markdown has no H1.
+
+    `next-steps.md` reads better on the tablet as "Next steps" than as either
+    the raw stem or "Untitled plan".
+    """
+    stem = Path(path).stem.strip()
+    words = re.sub(r"[-_]+", " ", stem)
+    words = re.sub(r"\s+", " ", words).strip()
+    if not words:
+        return "Untitled document"
+    return words[0].upper() + words[1:]
+
+
 def safe_filename(title, limit=80):
     name = UNSAFE_FILENAME_RE.sub(" ", title)
     name = re.sub(r"\s+", " ", name).strip().strip(".")
@@ -623,14 +637,22 @@ def upload(pdf_path, remote_dir, put_flag="--force"):
         raise RuntimeError(f"rmapi put failed: {proc.stderr.strip()[:300]}")
 
 
-def push_plan(plan_md, cwd, cfg=None):
-    """Render and upload one plan. Returns the remote path it landed at."""
+def push_plan(plan_md, cwd, cfg=None, title=None, project=None):
+    """Render and upload one document. Returns (remote path, title).
+
+    `title` overrides the document's own H1; `project` overrides the folder
+    that would be derived from `cwd`. Both exist for the manual `push` path,
+    where the file being sent need not be a plan and need not live in the
+    repository it belongs to.
+    """
     cfg = cfg or load_config()
     ensure_state()
 
-    title = plan_title(plan_md)
+    title = title or plan_title(plan_md)
     doc = document_name(title, cfg)
-    project = project_name(cwd)
+    # A caller-supplied project name becomes a remote path segment, so it gets
+    # the same sanitising as one derived from a directory name.
+    project = safe_filename(project, limit=40) if project else project_name(cwd)
     remote_dir = f"{cfg['remote_dir'].rstrip('/')}/{project}"
 
     with tempfile.TemporaryDirectory(prefix="plan2rm-out-") as tmp:

@@ -4,13 +4,12 @@
     plan2rm doctor            check the toolchain and cloud pairing
     plan2rm status            list what is on the tablet
     plan2rm config            show (and locate) the config file
-    plan2rm push <file.md>    render and upload a markdown file by hand
+    plan2rm push <file.md>    render and upload any markdown file by hand
     plan2rm clean --yes       delete every pushed plan from the cloud
     plan2rm clean <project> --yes
 """
 
 import argparse
-import os
 import sys
 from pathlib import Path
 
@@ -124,19 +123,48 @@ def cmd_config(args):
 
 
 def cmd_push(args):
-    path = Path(args.file).expanduser()
-    if not path.is_file():
-        print(f"no such file: {path}")
+    """Send one or more markdown files through the same pipeline as a plan."""
+    if args.title and len(args.file) > 1:
+        print("--title takes one file at a time.")
         return 1
-    text = path.read_text(encoding="utf-8")
-    title = lib.plan_title(text, fallback=path.stem)
-    print(f"rendering “{title}” ...")
-    try:
-        remote, title = lib.push_plan(text, os.getcwd())
-    except Exception as exc:
-        print(f"failed: {exc}")
+
+    paths = []
+    for name in args.file:
+        path = Path(name).expanduser()
+        if not path.is_file():
+            print(f"no such file: {path}")
+            return 1
+        paths.append(path)
+
+    cfg = lib.load_config()
+    failures = 0
+    for path in paths:
+        text = path.read_text(encoding="utf-8")
+        # The file's own H1 names it on the tablet. A document written as a
+        # note rather than as a plan often has none, so fall back to the
+        # filename instead of to the generic "Untitled plan".
+        title = args.title or lib.plan_title(
+            text, fallback=lib.title_from_filename(path))
+        print(f"rendering “{title}” ...")
+        try:
+            # Render relative to the file, not to the shell's directory: that
+            # is what files a document under the project it belongs to.
+            remote, title = lib.push_plan(
+                text, str(path.resolve().parent), cfg,
+                title=title, project=args.project,
+            )
+        except Exception as exc:
+            print(f"failed: {exc}")
+            lib.log(f"manual push of {path} failed: {exc}")
+            failures += 1
+            continue
+        lib.log(f"pushed '{title}' -> {remote} (manual)")
+        print(f"pushed to {remote}")
+
+    if failures:
+        print(f"\n{failures} of {len(paths)} file(s) failed; see {lib.LOG_PATH}.")
         return 1
-    print(f"pushed to {remote}")
+    print("It appears on the tablet at its next wifi sync.")
     return 0
 
 
@@ -169,8 +197,11 @@ def main():
     sub.add_parser("status", help="list pushed plans")
     sub.add_parser("config", help="show the config file")
 
-    p_push = sub.add_parser("push", help="render and upload a markdown file")
-    p_push.add_argument("file")
+    p_push = sub.add_parser("push", help="render and upload markdown files")
+    p_push.add_argument("file", nargs="+", help="markdown file(s) to send")
+    p_push.add_argument("--title", help="override the document title")
+    p_push.add_argument("--project", help="file it under this folder name "
+                                          "instead of the one derived from the repo")
 
     p_clean = sub.add_parser("clean", help="delete pushed plans from the cloud")
     p_clean.add_argument("project", nargs="?", help="only this project's folder")

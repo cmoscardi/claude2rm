@@ -1,6 +1,6 @@
 ---
 description: Check, inspect, or clean up the reMarkable plan sync
-argument-hint: "doctor | status | config | push <file.md> | clean [project] --yes"
+argument-hint: "doctor | status | config | push <file.md>... | clean [project] --yes"
 allowed-tools: Bash(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/plan2rm.py":*)
 ---
 
@@ -21,6 +21,8 @@ Notes for interpreting the output:
 - `clean` is destructive and refuses to run without `--yes`. If the user asked
   to clean without confirming, show them what `status` lists first and ask
   before re-running with `--yes`.
-- Plans push automatically on every plan Claude writes; the user never needs to
-  invoke `push` by hand. It exists for re-sending a markdown file that was
-  written some other way.
+- Plans push automatically on every plan Claude writes, so the user never needs
+  `push` for those. `push` sends any markdown file — notes, a README, a
+  hand-written document — through the same renderer. It takes several files,
+  `--title` to override the title, and `--project` to override the folder.
+  `/send2rm <file.md>` is the same thing with a shorter name.
