@@ -1,0 +1,108 @@
+% Preamble injected into every reMarkable PDF build (pandoc -H).
+% See README.md § "How the fixes work" for the reasoning behind each block.
+
+% ---------------------------------------------------------------------------
+% 1. Code blocks: soft-wrap instead of running off the page.
+%
+% Pandoc typesets highlighted code in a fancyvrb `Verbatim` environment, which
+% clips long lines at the right margin. fvextra patches Verbatim to support
+% breaklines; redefining Highlighting is the canonical pandoc recipe for
+% turning wrapping on without losing syntax colouring.
+% ---------------------------------------------------------------------------
+\usepackage{fvextra}
+\DefineVerbatimEnvironment{Highlighting}{Verbatim}{%
+  breaklines=true,
+  breakanywhere=true,
+  breaksymbolleft=\raisebox{0.6ex}{\tiny\ensuremath{\hookrightarrow}},
+  breaksymbolindentleft=0pt,
+  breaksymbolsepleft=3pt,
+  fontsize=\small,
+  commandchars=\\\{\},
+}
+% Same treatment for unhighlighted (plain ```) blocks.
+\DefineVerbatimEnvironment{verbatim}{Verbatim}{%
+  breaklines=true, breakanywhere=true, fontsize=\small,
+}
+
+% ---------------------------------------------------------------------------
+% 2. Display math: shrink-to-fit safety net + a machine-readable warning.
+%
+% LaTeX has no general automatic line-breaking for display math, so we cannot
+% break a wide derivation sensibly. What we CAN do is guarantee nothing ever
+% silently clips: measure the equation, and if it exceeds \linewidth, scale it
+% down and emit a warning naming its index. `make lint` greps those warnings
+% out of the build log and pairs them with the equation source, so wide
+% equations get reported for a real hand-fix rather than hidden.
+% ---------------------------------------------------------------------------
+\usepackage{graphicx}
+\newsavebox{\rmkbox}
+\newcounter{rmkeq}
+\newcommand{\rmkmath}[1]{%
+  \stepcounter{rmkeq}%
+  \sbox{\rmkbox}{$\displaystyle #1$}%
+  \ifdim\wd\rmkbox>\linewidth
+    \PackageWarning{remarkable}{RMKWIDE eq \thermkeq}%
+    \resizebox{\linewidth}{!}{\usebox{\rmkbox}}%
+  \else
+    \usebox{\rmkbox}%
+  \fi
+}
+
+% ---------------------------------------------------------------------------
+% 3. Glyph coverage.
+%
+% Latin Modern Mono lacks box-drawing characters, arrows and Greek, so ASCII
+% diagrams and things like `2π` inside code spans were being dropped silently
+% (they appear only as "Missing character" notes in the log). The Makefile
+% sets monofont=Menlo, which covers all of them.
+%
+% ⭐ is emoji: no monochrome text font has it and xdvipdfmx cannot embed colour
+% emoji, so map it to a math star instead of losing it.
+% ---------------------------------------------------------------------------
+% (\bigstar is no good here: unicode-math maps it to U+2605, which Latin Modern
+% Math does not contain either. Zapf Dingbats has a real filled star.)
+\usepackage{pifont}
+\usepackage{newunicodechar}
+\newunicodechar{⭐}{\ding{72}}
+
+% Mathematical symbols typed as literal Unicode in prose — "what ∂ means",
+% "x ∈ R" — have no glyph in the text fonts and would be dropped. Map them to
+% their real math equivalents so they typeset correctly with no source changes.
+% \ensuremath makes each safe in both text and math mode.
+%
+% Deliberately NOT mapped: Greek letters and π. Those appear mostly inside code
+% spans, where Menlo already has glyphs and a math-italic substitution would
+% look wrong. build/lint.py catches anything unmapped that actually drops.
+\newunicodechar{∂}{\ensuremath{\partial}}
+\newunicodechar{∇}{\ensuremath{\nabla}}
+\newunicodechar{∑}{\ensuremath{\sum}}
+\newunicodechar{∏}{\ensuremath{\prod}}
+\newunicodechar{∫}{\ensuremath{\int}}
+\newunicodechar{√}{\ensuremath{\sqrt{}}}
+\newunicodechar{∞}{\ensuremath{\infty}}
+\newunicodechar{∈}{\ensuremath{\in}}
+\newunicodechar{∉}{\ensuremath{\notin}}
+\newunicodechar{≈}{\ensuremath{\approx}}
+\newunicodechar{≠}{\ensuremath{\neq}}
+\newunicodechar{≤}{\ensuremath{\leq}}
+\newunicodechar{≥}{\ensuremath{\geq}}
+\newunicodechar{≡}{\ensuremath{\equiv}}
+\newunicodechar{∝}{\ensuremath{\propto}}
+\newunicodechar{⋅}{\ensuremath{\cdot}}
+\newunicodechar{∘}{\ensuremath{\circ}}
+\newunicodechar{∀}{\ensuremath{\forall}}
+\newunicodechar{∃}{\ensuremath{\exists}}
+\newunicodechar{⊤}{\ensuremath{\top}}
+\newunicodechar{⊥}{\ensuremath{\perp}}
+\newunicodechar{ᵀ}{\ensuremath{^\top}}
+\newunicodechar{✓}{\ding{51}}
+\newunicodechar{✗}{\ding{55}}
+
+% ---------------------------------------------------------------------------
+% 4. Typographic tuning for a 157mm-wide e-ink page.
+% Generous \sloppy tolerance because narrow measures produce lots of overfull
+% lines with default hyphenation penalties.
+% ---------------------------------------------------------------------------
+\sloppy
+\setlength{\emergencystretch}{3em}
+\usepackage{microtype}

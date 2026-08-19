@@ -1,0 +1,16 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "plan2rm",
+  "description": "Local marketplace hosting the plan2rm plugin",
+  "owner": {
+    "name": "Christian Moscardi"
+  },
+  "plugins": [
+    {
+      "name": "plan2rm",
+      "description": "Pushes every Claude Code plan to a reMarkable tablet as a paper-sized PDF before you approve it.",
+      "category": "productivity",
+      "source": "./"
+    }
+  ]
+}

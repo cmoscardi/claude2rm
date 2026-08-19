@@ -1,0 +1,28 @@
+{
+  "description": "plan2rm — render each plan to a reMarkable-sized PDF and upload it before the approval prompt appears",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "ExitPlanMode",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/push_plan.py\"",
+            "timeout": 180
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/preflight.py\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

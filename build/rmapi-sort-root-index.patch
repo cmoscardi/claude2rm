@@ -1,0 +1,41 @@
+diff --git a/api/sync15/tree.go b/api/sync15/tree.go
+index 77cf190..a00c3d5 100644
+--- a/api/sync15/tree.go
++++ b/api/sync15/tree.go
+@@ -169,22 +169,33 @@ func (t *HashTree) IndexReader() (io.Reader, error) {
+ 	w.WriteString(schemaVersion)
+ 	w.WriteString("\n")
+ 
++	// The cloud rejects a root index whose entries are not sorted by document
++	// ID with "invalid root schema" (HTTP 400), and mutators append new docs to
++	// the end of t.Docs. Sorting here — the single serialization point — keeps
++	// the uploaded body and the hash Rehash() computes over it consistent.
++	// Sort a copy so serializing never mutates the caller's tree.
++	docs := make([]*BlobDoc, len(t.Docs))
++	copy(docs, t.Docs)
++	sort.Slice(docs, func(i, j int) bool {
++		return docs[i].DocumentID < docs[j].DocumentID
++	})
++
+ 	if schemaVersion == SchemaVersionV4 {
+ 		totalSize := int64(0)
+-		for _, d := range t.Docs {
++		for _, d := range docs {
+ 			totalSize += d.Size
+ 		}
+ 		w.WriteString("0")
+ 		w.WriteRune(Delimiter)
+ 		w.WriteString(".")
+ 		w.WriteRune(Delimiter)
+-		w.WriteString(strconv.Itoa(len(t.Docs)))
++		w.WriteString(strconv.Itoa(len(docs)))
+ 		w.WriteRune(Delimiter)
+ 		w.WriteString(strconv.FormatInt(totalSize, 10))
+ 		w.WriteString("\n")
+ 	}
+ 
+-	for _, d := range t.Docs {
++	for _, d := range docs {
+ 		w.WriteString(d.LineWithSchema(schemaVersion))
+ 		w.WriteString("\n")
+ 	}
