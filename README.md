@@ -9,7 +9,7 @@ uploads it; only then does the approval prompt appear in your terminal.
 
 Install once, globally. After that it is automatic in every project on the
 machine — nothing to configure per repo, nothing to invoke by hand. Any other
-markdown or Word file can be sent on demand with `/send2rm <file>`.
+markdown, Word or PDF file can be sent on demand with `/send2rm <file>`.
 
 ## How it works
 
@@ -112,13 +112,14 @@ Verify with `/plan2rm doctor`.
 
 Plans need no usage. That is the point — they push themselves.
 
-### Sending a markdown or Word file
+### Sending a markdown, Word or PDF file
 
-Anything else you want on the tablet goes through the same renderer:
+Anything else you want on the tablet goes the same way:
 
 ```
 /send2rm docs/next-steps.md
 /send2rm ~/Downloads/contract.docx
+/send2rm ~/Downloads/board-pack.pdf
 ```
 
 Or just ask for it in plain English — "send next-steps.md to my reMarkable",
@@ -128,19 +129,27 @@ The document is filed under the folder for the repository *the file lives in*,
 not the directory your shell is in, so pushing `~/work/api/NOTES.md` from
 anywhere files it under `api`. Its title is the file's own H1, or — for a Word
 file with no heading — the title Word recorded, or the filename: `next-steps.md`
-becomes "Next steps".
+becomes "Next steps". A PDF always takes the filename, because there is no page
+to print a title on.
 
 | Flag | Effect |
 | --- | --- |
 | `--title "..."` | Override the title (one file at a time) |
 | `--project <name>` | File it under a different folder |
 
-Several files at once are fine: `/send2rm a.md b.docx c.md`.
+Several files at once are fine: `/send2rm a.md b.docx c.pdf`.
 
-Markdown and Word (`.docx`, `.doc`). A Word file is converted to markdown by
-pandoc first, so it takes exactly the same path as a plan: headings, tables,
-underlining, footnotes and embedded images all survive. The renderer does not
-take PDF or source files.
+Markdown, Word (`.docx`, `.doc`) and PDF. A Word file is converted to markdown
+by pandoc first, so it takes exactly the same path as a plan: headings, tables,
+underlining, footnotes and embedded images all survive. Source files are not
+accepted.
+
+A PDF is uploaded exactly as it is. Nothing is rendered and nothing is
+converted — it is already the format the tablet reads, and re-making it would
+only lose the typesetting it came with. That also means it keeps the page size
+it was made at: the tablet scales a letter-sized or A4 PDF down to the screen,
+so its text reads smaller than a document plan2rm builds. A PDF push needs
+`rmapi` alone; neither pandoc nor tectonic is involved.
 
 Images work. A path in a markdown file is resolved against the directory the
 file lives in — `![](diagram.png)`, `![](assets/diagram.png)` and

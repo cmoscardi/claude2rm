@@ -329,11 +329,17 @@ def is_denied(cwd, cfg):
 # The renderer, the title logic and the ascii fallback all work on markdown, so
 # a Word file is converted to markdown first and then takes exactly the same
 # path as a plan. Conversion goes through pandoc, which is already required.
+#
+# A PDF is the exception: it is already the format the tablet reads, so it
+# skips the reader and the renderer entirely and goes straight to push_pdf().
 # ---------------------------------------------------------------------------
 
 MARKDOWN_SUFFIXES = {".md", ".markdown", ".mdown", ".mkd", ".mdx", ".txt", ""}
 WORD_SUFFIXES = {".docx", ".doc"}
-SUPPORTED_SUFFIXES = MARKDOWN_SUFFIXES | WORD_SUFFIXES
+PDF_SUFFIXES = {".pdf"}
+# What read_document() can turn into markdown. A PDF is not in here.
+RENDERABLE_SUFFIXES = MARKDOWN_SUFFIXES | WORD_SUFFIXES
+SUPPORTED_SUFFIXES = RENDERABLE_SUFFIXES | PDF_SUFFIXES
 
 # Pandoc's own markdown flavour, not gfm: it is the only writer whose output
 # the reader in _pandoc_flags() reads back without loss. Word underlining, for
@@ -458,11 +464,17 @@ def read_document(path, workdir):
         text, title = word_to_markdown(path, Path(workdir))
         return text, title or title_from_filename(path)
 
+    if suffix in PDF_SUFFIXES:
+        raise RuntimeError(
+            f"{path.name} is a PDF and needs no conversion; send it with "
+            "push_pdf() instead."
+        )
+
     if suffix not in MARKDOWN_SUFFIXES:
         raise RuntimeError(
             f"{path.name}: plan2rm renders markdown and Word documents "
-            f"({', '.join(sorted(s for s in SUPPORTED_SUFFIXES if s))}). "
-            "Convert the file first."
+            f"({', '.join(sorted(s for s in RENDERABLE_SUFFIXES if s))}), "
+            "and sends a PDF as it is. Convert the file first."
         )
 
     try:
@@ -833,6 +845,14 @@ def upload(pdf_path, remote_dir, put_flag="--force"):
         raise RuntimeError(f"rmapi put failed: {proc.stderr.strip()[:300]}")
 
 
+def destination(title, cwd, cfg, project=None):
+    """(remote directory, document name) for a document with this title."""
+    # A caller-supplied project name becomes a remote path segment, so it gets
+    # the same sanitising as one derived from a directory name.
+    project = safe_filename(project, limit=40) if project else project_name(cwd)
+    return f"{cfg['remote_dir'].rstrip('/')}/{project}", document_name(title, cfg)
+
+
 def push_plan(plan_md, cwd, cfg=None, title=None, project=None):
     """Render and upload one document. Returns (remote path, title).
 
@@ -845,11 +865,7 @@ def push_plan(plan_md, cwd, cfg=None, title=None, project=None):
     ensure_state()
 
     title = title or plan_title(plan_md)
-    doc = document_name(title, cfg)
-    # A caller-supplied project name becomes a remote path segment, so it gets
-    # the same sanitising as one derived from a directory name.
-    project = safe_filename(project, limit=40) if project else project_name(cwd)
-    remote_dir = f"{cfg['remote_dir'].rstrip('/')}/{project}"
+    remote_dir, doc = destination(title, cwd, cfg, project)
 
     with tempfile.TemporaryDirectory(prefix="plan2rm-out-") as tmp:
         # rmapi names the document after the file, so the local filename is
@@ -858,5 +874,44 @@ def push_plan(plan_md, cwd, cfg=None, title=None, project=None):
         render_pdf(plan_md, title, pdf_path, cfg, resource_dir=cwd)
         with Lock():
             upload(pdf_path, remote_dir, cfg.get("put_flag", "--force"))
+
+    return f"{remote_dir}/{doc}", title
+
+
+def push_pdf(src, cwd, cfg=None, title=None, project=None):
+    """Upload a PDF unchanged. Returns (remote path, title).
+
+    Nothing is rendered or converted: a PDF is already what the tablet reads,
+    and re-making it would only lose the typesetting it came with. It keeps
+    whatever page size it was made at, so a letter-sized or A4 PDF reads
+    smaller on the screen than one plan2rm builds for the device.
+
+    The title names the file on the tablet and nothing else — there is no page
+    to print it on — so it comes from the filename unless the caller gives one.
+    """
+    cfg = cfg or load_config()
+    ensure_state()
+
+    src = Path(src)
+    # rmapi accepts anything and the tablet then shows an unopenable document,
+    # so check the one byte-string that says this really is a PDF.
+    try:
+        header = src.open("rb").read(5)
+    except OSError as exc:
+        raise RuntimeError(f"could not read {src.name}: {exc}")
+    if header != b"%PDF-":
+        raise RuntimeError(f"{src.name} is named .pdf but is not a PDF file.")
+
+    title = title or title_from_filename(src)
+    remote_dir, doc = destination(title, cwd, cfg, project)
+
+    with tempfile.TemporaryDirectory(prefix="plan2rm-out-") as tmp:
+        # The upload is copied rather than sent from where it sits, because
+        # rmapi names the document after the file and the source filename
+        # carries neither the date suffix nor any sanitising.
+        staged = Path(tmp) / f"{doc}.pdf"
+        shutil.copyfile(src, staged)
+        with Lock():
+            upload(staged, remote_dir, cfg.get("put_flag", "--force"))
 
     return f"{remote_dir}/{doc}", title

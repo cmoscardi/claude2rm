@@ -4,7 +4,7 @@
     plan2rm doctor            check the toolchain and cloud pairing
     plan2rm status            list what is on the tablet
     plan2rm config            show (and locate) the config file
-    plan2rm push <file>       render and upload a markdown or Word file
+    plan2rm push <file>       upload a markdown, Word or PDF file
     plan2rm clean --yes       delete every pushed plan from the cloud
     plan2rm clean <project> --yes
 """
@@ -154,6 +154,29 @@ def cmd_push(args):
     cfg = lib.load_config()
     failures = 0
     for path in paths:
+        # Uploaded relative to the file, not to the shell's directory: that is
+        # what files a document under the project it belongs to.
+        home = str(path.resolve().parent)
+
+        if path.suffix.lower() in lib.PDF_SUFFIXES:
+            # Already a PDF. Nothing to convert, nothing to render — say so,
+            # because the absence of the usual "rendering" line is otherwise
+            # the only sign that this file took a different route.
+            title = args.title or lib.title_from_filename(path)
+            print(f"sending “{title}” as it is ...")
+            try:
+                remote, title = lib.push_pdf(
+                    path, home, cfg, title=title, project=args.project,
+                )
+            except Exception as exc:
+                print(f"failed: {exc}")
+                lib.log(f"manual push of {path} failed: {exc}")
+                failures += 1
+                continue
+            lib.log(f"pushed '{title}' -> {remote} (manual, pdf as-is)")
+            print(f"pushed to {remote}")
+            continue
+
         # A Word file becomes markdown first, and its images are extracted
         # into this directory. It must therefore outlive the render, which
         # reads those images by absolute path.
@@ -173,11 +196,8 @@ def cmd_push(args):
             title = args.title or lib.plan_title(text, fallback=fallback)
             print(f"rendering “{title}” ...")
             try:
-                # Render relative to the file, not to the shell's directory:
-                # that is what files a document under the project it belongs to.
                 remote, title = lib.push_plan(
-                    text, str(path.resolve().parent), cfg,
-                    title=title, project=args.project,
+                    text, home, cfg, title=title, project=args.project,
                 )
             except Exception as exc:
                 print(f"failed: {exc}")
@@ -223,8 +243,9 @@ def main():
     sub.add_parser("status", help="list pushed plans")
     sub.add_parser("config", help="show the config file")
 
-    p_push = sub.add_parser("push", help="render and upload markdown or Word files")
-    p_push.add_argument("file", nargs="+", help="markdown, .docx or .doc file(s) to send")
+    p_push = sub.add_parser("push", help="upload markdown, Word or PDF files")
+    p_push.add_argument("file", nargs="+",
+                        help="markdown, .docx, .doc or .pdf file(s) to send")
     p_push.add_argument("--title", help="override the document title")
     p_push.add_argument("--project", help="file it under this folder name "
                                           "instead of the one derived from the repo")
