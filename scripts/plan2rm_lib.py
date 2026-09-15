@@ -16,8 +16,10 @@ import subprocess
 import sys
 import tempfile
 import time
+import zipfile
 from datetime import date
 from pathlib import Path
+from xml.etree import ElementTree
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -47,7 +49,9 @@ DEFAULT_CONFIG = {
     "put_flag": "--force",
     # Absolute path prefixes whose plans are never uploaded.
     "deny": [],
-    "date_prefix": True,
+    # The date goes after the title, so the tablet's own list is alphabetical
+    # by document rather than by day. Set false to leave it off entirely.
+    "date_suffix": True,
 }
 
 # The reMarkable scales a PDF to the screen rather than reflowing it, so
@@ -108,6 +112,8 @@ EXTRA_BIN_DIRS = [
     Path("/bin"),
     Path.home() / "bin",
     Path("/opt/homebrew/opt/node/bin"),
+    # LibreOffice is a .app bundle; its CLI is never on PATH.
+    Path("/Applications/LibreOffice.app/Contents/MacOS"),
 ]
 
 # Binaries plan2rm builds for itself. This wins over PATH: it exists because
@@ -192,7 +198,10 @@ def rmapi_is_patched(path):
 
 
 REQUIRED_TOOLS = ["pandoc", "tectonic", "rmapi"]
-OPTIONAL_TOOLS = ["mmdc"]
+# mmdc renders mermaid diagrams; textutil and soffice each convert the old
+# binary .doc format, which pandoc cannot read. Any one of them is enough.
+OPTIONAL_TOOLS = ["mmdc", "textutil", "soffice"]
+DOC_CONVERTERS = ["textutil", "soffice"]
 
 
 def check_deps():
@@ -232,7 +241,10 @@ def title_from_filename(path):
     the raw stem or "Untitled plan".
     """
     stem = Path(path).stem.strip()
-    words = re.sub(r"[-_]+", " ", stem)
+    # A hyphen is a word separator in `next-steps.md` but part of the name in
+    # `Int. No. 199-2.docx`, so only open up the ones between letters.
+    words = re.sub(r"_+", " ", stem)
+    words = re.sub(r"(?<=[^\W\d_])-+(?=[^\W\d_])", " ", words)
     words = re.sub(r"\s+", " ", words).strip()
     if not words:
         return "Untitled document"
@@ -283,9 +295,16 @@ def project_name(cwd):
 
 
 def document_name(title, cfg, when=None):
+    """The filename rmapi uploads under, which is what you read on the tablet.
+
+    Title first: the reMarkable shows a truncated name in a narrow tile, so a
+    leading date costs the ten characters that tell one document from another.
+    `date_prefix` is the old name of the setting and is still honoured.
+    """
     base = safe_filename(title)
-    if cfg.get("date_prefix", True):
-        return f"{(when or date.today()).isoformat()} {base}"
+    dated = cfg.get("date_suffix", cfg.get("date_prefix", True))
+    if dated:
+        return f"{base} ({(when or date.today()).isoformat()})"
     return base
 
 
@@ -302,6 +321,155 @@ def is_denied(cwd, cfg):
         if resolved == expanded or resolved.startswith(expanded.rstrip("/") + "/"):
             return True
     return False
+
+
+# ---------------------------------------------------------------------------
+# Source documents
+#
+# The renderer, the title logic and the ascii fallback all work on markdown, so
+# a Word file is converted to markdown first and then takes exactly the same
+# path as a plan. Conversion goes through pandoc, which is already required.
+# ---------------------------------------------------------------------------
+
+MARKDOWN_SUFFIXES = {".md", ".markdown", ".mdown", ".mkd", ".mdx", ".txt", ""}
+WORD_SUFFIXES = {".docx", ".doc"}
+SUPPORTED_SUFFIXES = MARKDOWN_SUFFIXES | WORD_SUFFIXES
+
+# Pandoc's own markdown flavour, not gfm: it is the only writer whose output
+# the reader in _pandoc_flags() reads back without loss. Word underlining, for
+# one, round-trips as [text]{.underline} but as raw <u> HTML in gfm — and raw
+# HTML is dropped silently on the way to LaTeX, which in a legal document
+# means most of the text disappears.
+DOCX_TO_MARKDOWN = [
+    "--to=markdown",
+    "--wrap=none",
+    "--markdown-headings=atx",   # so the table-of-contents heuristic sees them
+    "--track-changes=accept",
+]
+
+DC_TITLE = "{http://purl.org/dc/elements/1.1/}title"
+
+
+def docx_title(path):
+    """The title Word itself records, or None.
+
+    Read straight out of the package rather than through pandoc: it is one
+    small XML file, and most documents leave it empty, so it is not worth a
+    second conversion run to find out.
+    """
+    try:
+        with zipfile.ZipFile(path) as zf:
+            root = ElementTree.fromstring(zf.read("docProps/core.xml"))
+    except Exception:
+        return None
+    node = root.find(DC_TITLE)
+    if node is not None and (node.text or "").strip():
+        return node.text.strip()
+    return None
+
+
+def doc_to_docx(path, workdir):
+    """Old binary .doc -> .docx inside `workdir`. Raises if neither tool is there.
+
+    Pandoc reads the XML formats only; .doc is a different, undocumented
+    format. macOS ships textutil, which converts it without a launch of any
+    application; LibreOffice covers everyone else.
+    """
+    out = workdir / "converted.docx"
+
+    textutil = find_tool("textutil")
+    if textutil:
+        proc = subprocess.run(
+            [textutil, "-convert", "docx", "-output", str(out), str(path)],
+            capture_output=True, text=True,
+            stdin=subprocess.DEVNULL, timeout=120,
+        )
+        if out.is_file():
+            return out
+        raise RuntimeError(f"textutil could not read {path.name}: "
+                           f"{proc.stderr.strip()[:200]}")
+
+    soffice = find_tool("soffice")
+    if soffice:
+        proc = subprocess.run(
+            [soffice, "--headless", "--convert-to", "docx",
+             "--outdir", str(workdir), str(path)],
+            capture_output=True, text=True,
+            stdin=subprocess.DEVNULL, timeout=300,
+        )
+        # LibreOffice names the result after the input and reports success even
+        # when it wrote nothing, so find the file rather than trust the exit code.
+        produced = workdir / (path.stem + ".docx")
+        if produced.is_file():
+            return produced
+        raise RuntimeError(f"soffice could not read {path.name}: "
+                           f"{proc.stderr.strip()[:200]}")
+
+    raise RuntimeError(
+        f"{path.name} is in the old binary .doc format, which pandoc cannot "
+        "read. Install LibreOffice (`brew install --cask libreoffice`), or "
+        "save the file as .docx."
+    )
+
+
+def word_to_markdown(path, workdir):
+    """(markdown, title or None) for a .doc or .docx file.
+
+    `workdir` must outlive the render: images are extracted into it and the
+    markdown points at them by absolute path.
+    """
+    pandoc = find_tool("pandoc")
+    if not pandoc:
+        raise RuntimeError("pandoc is required to read Word documents")
+
+    docx = path if path.suffix.lower() == ".docx" else doc_to_docx(path, workdir)
+
+    proc = subprocess.run(
+        [pandoc, *DOCX_TO_MARKDOWN,
+         f"--extract-media={workdir / 'media'}", str(docx)],
+        capture_output=True, text=True,
+        stdin=subprocess.DEVNULL, timeout=180,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(f"pandoc could not read {path.name}: "
+                           f"{proc.stderr.strip()[:300]}")
+    if not proc.stdout.strip():
+        raise RuntimeError(f"{path.name} converted to an empty document")
+
+    text, title = proc.stdout, docx_title(docx)
+    # Pandoc lifts a paragraph in Word's "Title" style out of the body and into
+    # the metadata, so a document titled that way would render with its title
+    # missing from the page. Put it back as the H1 it stands for.
+    if title and not H1_RE.search(text):
+        text = f"# {title}\n\n{text}"
+    return text, title
+
+
+def read_document(path, workdir):
+    """(markdown, fallback title) for any supported file.
+
+    The fallback title is used only when the document has no H1 of its own:
+    the title Word recorded, or a readable form of the filename.
+    """
+    path = Path(path)
+    suffix = path.suffix.lower()
+
+    if suffix in WORD_SUFFIXES:
+        text, title = word_to_markdown(path, Path(workdir))
+        return text, title or title_from_filename(path)
+
+    if suffix not in MARKDOWN_SUFFIXES:
+        raise RuntimeError(
+            f"{path.name}: plan2rm renders markdown and Word documents "
+            f"({', '.join(sorted(s for s in SUPPORTED_SUFFIXES if s))}). "
+            "Convert the file first."
+        )
+
+    try:
+        return path.read_text(encoding="utf-8"), title_from_filename(path)
+    except UnicodeDecodeError:
+        raise RuntimeError(f"{path.name} is not text; plan2rm renders markdown "
+                           "and Word documents.")
 
 
 # ---------------------------------------------------------------------------
@@ -342,6 +510,7 @@ def asciify(text):
         "→": "->", "←": "<-", "⇒": "=>", "↔": "<->", "•": "*", "…": "...",
         "✓": "[y]", "✗": "[n]", "≈": "~=", "≤": "<=", "≥": ">=", "≠": "!=",
         "▶": ">", "◀": "<", "★": "*", "⭐": "*", "│": "|", "─": "-",
+        "☐": "[ ]", "☑": "[x]", "☒": "[x]",
     }
     for src, dst in replacements.items():
         text = text.replace(src, dst)
@@ -380,8 +549,21 @@ def _pandoc_flags(cfg, title, toc):
     return flags
 
 
-def render_pdf(plan_md, title, out_pdf, cfg):
-    """Markdown -> reMarkable-sized PDF at `out_pdf`. Raises on failure."""
+def render_pdf(plan_md, title, out_pdf, cfg, resource_dir=None):
+    """Markdown -> reMarkable-sized PDF at `out_pdf`. Raises on failure.
+
+    `resource_dir` is the directory that relative paths in the markdown are
+    written against — the directory holding the source file, or the project
+    the plan is about. Pandoc runs there and copies every image it finds into
+    the build directory, rewriting each path to an absolute one. Without that,
+    `![](img.png)` is looked for beside the staged copy of the markdown, in a
+    temporary directory that holds nothing else, and the build fails on an
+    image that is plainly sitting next to the file.
+
+    Rewriting is what does the work here, not the working directory: tectonic
+    resolves a relative path against the .tex file it was given, so no choice
+    of working directory would have let it find the image on its own.
+    """
     pandoc = find_tool("pandoc")
     tectonic = find_tool("tectonic")
     if not pandoc or not tectonic:
@@ -402,6 +584,11 @@ def render_pdf(plan_md, title, out_pdf, cfg):
     )
     MERMAID_CACHE.mkdir(parents=True, exist_ok=True)
 
+    # Relative paths belong to whoever wrote the markdown, so resolve them
+    # where it was written. A directory that has gone away is not worth
+    # failing over: everything except the images still renders without it.
+    workdir = str(resource_dir) if resource_dir and Path(resource_dir).is_dir() else None
+
     def build(source):
         """Returns None on success (out_pdf written), or an error string."""
         with tempfile.TemporaryDirectory(prefix="plan2rm-") as tmp:
@@ -410,12 +597,21 @@ def render_pdf(plan_md, title, out_pdf, cfg):
             md_path.write_text(source, encoding="utf-8")
 
             proc = subprocess.run(
-                [pandoc, *_pandoc_flags(cfg, title, toc), str(md_path), "-o", str(tex_path)],
-                capture_output=True, text=True, env=env,
+                [pandoc, *_pandoc_flags(cfg, title, toc),
+                 f"--extract-media={tmp / 'media'}",
+                 str(md_path), "-o", str(tex_path)],
+                capture_output=True, text=True, env=env, cwd=workdir,
                 stdin=subprocess.DEVNULL, timeout=120,
             )
             if proc.returncode != 0:
                 return f"pandoc: {proc.stderr.strip()[:500]}"
+
+            # A path that resolves to nothing is not fatal — pandoc puts the
+            # image's description in its place — but it is the author's
+            # mistake to hear about, and the PDF itself cannot show it.
+            for line in proc.stderr.splitlines():
+                if "Could not fetch resource" in line:
+                    log(f"render '{title}': {line.strip()}")
 
             proc = subprocess.run(
                 [tectonic, "-X", "compile", str(tex_path),
@@ -659,7 +855,7 @@ def push_plan(plan_md, cwd, cfg=None, title=None, project=None):
         # rmapi names the document after the file, so the local filename is
         # what you will read on the tablet.
         pdf_path = Path(tmp) / f"{doc}.pdf"
-        render_pdf(plan_md, title, pdf_path, cfg)
+        render_pdf(plan_md, title, pdf_path, cfg, resource_dir=cwd)
         with Lock():
             upload(pdf_path, remote_dir, cfg.get("put_flag", "--force"))
 

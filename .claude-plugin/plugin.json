@@ -1,7 +1,7 @@
 {
   "name": "plan2rm",
   "version": "0.1.0",
-  "description": "Pushes every Claude Code plan to a reMarkable tablet as a paper-sized PDF before you approve it, so you can read the plan on e-ink instead of in the terminal. Any other markdown file can be sent on demand with /send2rm. Titles come from the document's own H1; documents are filed per project.",
+  "description": "Pushes every Claude Code plan to a reMarkable tablet as a paper-sized PDF before you approve it, so you can read the plan on e-ink instead of in the terminal. Any other markdown or Word file (.docx, .doc) can be sent on demand with /send2rm. Titles come from the document's own H1; documents are filed per project.",
   "author": {
     "name": "Christian Moscardi"
   }

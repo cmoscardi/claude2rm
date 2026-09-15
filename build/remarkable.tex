@@ -98,6 +98,12 @@
 \newunicodechar{✓}{\ding{51}}
 \newunicodechar{✗}{\ding{55}}
 
+% Ballot boxes. Word forms are full of these — a checklist in a converted .docx
+% is unreadable if they drop. amssymb is loaded by pandoc's own template.
+\newunicodechar{☐}{\ensuremath{\square}}
+\newunicodechar{☑}{\ensuremath{\boxdot}}
+\newunicodechar{☒}{\ensuremath{\boxtimes}}
+
 % ---------------------------------------------------------------------------
 % 4. Typographic tuning for a 157mm-wide e-ink page.
 % Generous \sloppy tolerance because narrow measures produce lots of overfull

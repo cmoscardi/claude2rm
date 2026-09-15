@@ -4,13 +4,14 @@
     plan2rm doctor            check the toolchain and cloud pairing
     plan2rm status            list what is on the tablet
     plan2rm config            show (and locate) the config file
-    plan2rm push <file.md>    render and upload any markdown file by hand
+    plan2rm push <file>       render and upload a markdown or Word file
     plan2rm clean --yes       delete every pushed plan from the cloud
     plan2rm clean <project> --yes
 """
 
 import argparse
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -21,6 +22,9 @@ INSTALL_HINTS = {
     "pandoc": "brew install pandoc",
     "tectonic": "brew install tectonic",
     "mmdc": "npm install -g @mermaid-js/mermaid-cli   (only needed for mermaid diagrams)",
+    "textutil": "ships with macOS   (converts old .doc files; soffice also does)",
+    "soffice": "brew install --cask libreoffice   (only needed for old .doc files "
+               "on a machine without textutil)",
     "rmapi": (
         "download the binary for your platform from\n"
         "       https://github.com/ddvk/rmapi/releases into ~/.local/bin"
@@ -39,7 +43,10 @@ def cmd_doctor(args):
     failed = False
 
     print("toolchain")
-    for tool in lib.REQUIRED_TOOLS + lib.OPTIONAL_TOOLS:
+    # The .doc converters are reported together below: either one will do, so
+    # naming the absent one here would read as a problem when it is not.
+    for tool in [t for t in lib.REQUIRED_TOOLS + lib.OPTIONAL_TOOLS
+                 if t not in lib.DOC_CONVERTERS]:
         path = lib.find_tool(tool)
         required = tool in lib.REQUIRED_TOOLS
         if path:
@@ -48,6 +55,14 @@ def cmd_doctor(args):
             mark = "MISSING " if required else "absent  "
             print(f"  {mark} {tool:<10} {INSTALL_HINTS.get(tool, '')}")
             failed = failed or required
+
+    converter = next((t for t in lib.DOC_CONVERTERS if lib.find_tool(t)), None)
+    if converter:
+        print(f"  ok       .doc       {lib.find_tool(converter)}")
+    else:
+        print("  absent   .doc       old .doc files cannot be converted "
+              "(.docx and markdown are fine).")
+        print(f"                      {INSTALL_HINTS['soffice']}")
 
     rmapi_path = lib.find_tool("rmapi")
     if rmapi_path:
@@ -123,7 +138,7 @@ def cmd_config(args):
 
 
 def cmd_push(args):
-    """Send one or more markdown files through the same pipeline as a plan."""
+    """Send one or more documents through the same pipeline as a plan."""
     if args.title and len(args.file) > 1:
         print("--title takes one file at a time.")
         return 1
@@ -139,25 +154,36 @@ def cmd_push(args):
     cfg = lib.load_config()
     failures = 0
     for path in paths:
-        text = path.read_text(encoding="utf-8")
-        # The file's own H1 names it on the tablet. A document written as a
-        # note rather than as a plan often has none, so fall back to the
-        # filename instead of to the generic "Untitled plan".
-        title = args.title or lib.plan_title(
-            text, fallback=lib.title_from_filename(path))
-        print(f"rendering “{title}” ...")
-        try:
-            # Render relative to the file, not to the shell's directory: that
-            # is what files a document under the project it belongs to.
-            remote, title = lib.push_plan(
-                text, str(path.resolve().parent), cfg,
-                title=title, project=args.project,
-            )
-        except Exception as exc:
-            print(f"failed: {exc}")
-            lib.log(f"manual push of {path} failed: {exc}")
-            failures += 1
-            continue
+        # A Word file becomes markdown first, and its images are extracted
+        # into this directory. It must therefore outlive the render, which
+        # reads those images by absolute path.
+        with tempfile.TemporaryDirectory(prefix="plan2rm-src-") as workdir:
+            try:
+                text, fallback = lib.read_document(path, workdir)
+            except Exception as exc:
+                print(f"failed: {exc}")
+                lib.log(f"manual push of {path} failed to convert: {exc}")
+                failures += 1
+                continue
+
+            # The file's own H1 names it on the tablet. A document written as a
+            # note rather than as a plan often has none — and a Word file
+            # rarely has one — so fall back to the title Word recorded or to
+            # the filename, not to the generic "Untitled plan".
+            title = args.title or lib.plan_title(text, fallback=fallback)
+            print(f"rendering “{title}” ...")
+            try:
+                # Render relative to the file, not to the shell's directory:
+                # that is what files a document under the project it belongs to.
+                remote, title = lib.push_plan(
+                    text, str(path.resolve().parent), cfg,
+                    title=title, project=args.project,
+                )
+            except Exception as exc:
+                print(f"failed: {exc}")
+                lib.log(f"manual push of {path} failed: {exc}")
+                failures += 1
+                continue
         lib.log(f"pushed '{title}' -> {remote} (manual)")
         print(f"pushed to {remote}")
 
@@ -197,8 +223,8 @@ def main():
     sub.add_parser("status", help="list pushed plans")
     sub.add_parser("config", help="show the config file")
 
-    p_push = sub.add_parser("push", help="render and upload markdown files")
-    p_push.add_argument("file", nargs="+", help="markdown file(s) to send")
+    p_push = sub.add_parser("push", help="render and upload markdown or Word files")
+    p_push.add_argument("file", nargs="+", help="markdown, .docx or .doc file(s) to send")
     p_push.add_argument("--title", help="override the document title")
     p_push.add_argument("--project", help="file it under this folder name "
                                           "instead of the one derived from the repo")

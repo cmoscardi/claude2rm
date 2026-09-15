@@ -9,7 +9,7 @@ uploads it; only then does the approval prompt appear in your terminal.
 
 Install once, globally. After that it is automatic in every project on the
 machine — nothing to configure per repo, nothing to invoke by hand. Any other
-markdown file can be sent on demand with `/send2rm <file.md>`.
+markdown or Word file can be sent on demand with `/send2rm <file>`.
 
 ## How it works
 
@@ -26,7 +26,7 @@ Claude finishes planning
                      pandoc ─► tectonic ─► PDF at 157 x 210 mm
                           │
                           ▼
-                     rmapi put  ──►  /claude-plans/<project>/<date> <title>
+                     rmapi put  ──►  /claude-plans/<project>/<title> (<date>)
         │
         ▼
   approval prompt appears in the terminal
@@ -112,12 +112,13 @@ Verify with `/plan2rm doctor`.
 
 Plans need no usage. That is the point — they push themselves.
 
-### Sending any markdown file
+### Sending a markdown or Word file
 
 Anything else you want on the tablet goes through the same renderer:
 
 ```
 /send2rm docs/next-steps.md
+/send2rm ~/Downloads/contract.docx
 ```
 
 Or just ask for it in plain English — "send next-steps.md to my reMarkable",
@@ -125,17 +126,34 @@ Or just ask for it in plain English — "send next-steps.md to my reMarkable",
 
 The document is filed under the folder for the repository *the file lives in*,
 not the directory your shell is in, so pushing `~/work/api/NOTES.md` from
-anywhere files it under `api`. Its title is the file's own H1, or the filename
-when it has none — `next-steps.md` becomes "Next steps".
+anywhere files it under `api`. Its title is the file's own H1, or — for a Word
+file with no heading — the title Word recorded, or the filename: `next-steps.md`
+becomes "Next steps".
 
 | Flag | Effect |
 | --- | --- |
 | `--title "..."` | Override the title (one file at a time) |
 | `--project <name>` | File it under a different folder |
 
-Several files at once are fine: `/send2rm a.md b.md c.md`.
+Several files at once are fine: `/send2rm a.md b.docx c.md`.
 
-Markdown only. The renderer does not take PDF, plain text, or source files.
+Markdown and Word (`.docx`, `.doc`). A Word file is converted to markdown by
+pandoc first, so it takes exactly the same path as a plan: headings, tables,
+underlining, footnotes and embedded images all survive. The renderer does not
+take PDF or source files.
+
+Images work. A path in a markdown file is resolved against the directory the
+file lives in — `![](diagram.png)`, `![](assets/diagram.png)` and
+`![](../shared/diagram.png)` all render, and a `https://` image is fetched at
+render time. An image a path does not lead to is replaced by its own
+description rather than failing the build, and the miss is written to
+`~/.plan2rm/plan2rm.log`. Images inside a Word file are extracted and embedded
+with no path to get right.
+
+`.doc` is the old binary format, which pandoc cannot read. It is converted to
+`.docx` first — by `textutil`, which ships with macOS, or by LibreOffice
+(`brew install --cask libreoffice`) anywhere else. `/plan2rm doctor` says which
+of the two you have.
 
 ### Everything else
 
@@ -144,7 +162,7 @@ Markdown only. The renderer does not take PDF, plain text, or source files.
 | `/plan2rm doctor` | Check the toolchain, pairing, and config |
 | `/plan2rm status` | List what is on the tablet, flag duplicates |
 | `/plan2rm config` | Show the config file and its path |
-| `/plan2rm push <file.md>...` | The same as `/send2rm` |
+| `/plan2rm push <file>...` | The same as `/send2rm` |
 | `/plan2rm clean --yes` | Delete every pushed plan from the cloud |
 | `/plan2rm clean <project> --yes` | Delete one project's folder |
 
@@ -159,7 +177,7 @@ Markdown only. The renderer does not take PDF, plain text, or source files.
   "device": "rm2",
   "put_flag": "--force",
   "deny": [],
-  "date_prefix": true
+  "date_suffix": true
 }
 ```
 
@@ -169,6 +187,10 @@ Markdown only. The renderer does not take PDF, plain text, or source files.
 - **`put_flag`** — `--force` replaces the document outright, discarding
   handwriting on the replaced pages. `--content-only` keeps annotations, but
   they will not line up once a plan is revised.
+- **`date_suffix`** — append ` (2026-09-15)` to the document name. The title
+  comes first either way, so the tablet sorts your documents by name and a
+  narrow tile still shows which one it is. Set it to `false` for the bare
+  title. (The setting used to be called `date_prefix`; that name still works.)
 - **`deny`** — absolute path prefixes whose plans are never uploaded. Global
   scope means plans from *every* project reach reMarkable's cloud; this is the
   escape hatch for anything you would rather keep off it.
